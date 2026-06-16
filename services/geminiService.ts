@@ -18,11 +18,13 @@ export const getApiBaseUrl = (): string => {
 
     // Auto-detect static hosting (Vercel, Netlify, GitHub Pages, custom domains) and route requests
     // to the active production Cloud Run backend so it works out-of-the-box.
+    // Railway (*.up.railway.app) and localhost are treated as fullstack deployments and use relative paths.
     if (typeof window !== 'undefined') {
         const hn = window.location.hostname;
         const isRunApp = hn.endsWith('.run.app') || hn.includes('run.app');
         const isLocal = hn === 'localhost' || hn === '127.0.0.1' || hn.startsWith('192.168.') || hn.endsWith('.local');
-        if (!isRunApp && !isLocal) {
+        const isRailway = hn.endsWith('.up.railway.app');
+        if (!isRunApp && !isLocal && !isRailway) {
             return 'https://ais-pre-kwolk7smnvsqrf6ls5kdxz-67721096825.europe-west2.run.app';
         }
     }
