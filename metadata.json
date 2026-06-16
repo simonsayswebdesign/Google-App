@@ -1,0 +1,8 @@
+{
+  "name": "Section Gen editor 4 (3.1 Gemini) Animation",
+  "description": "AI-powered generator for modern, Tailwind-styled website sections ready for import into Chai Builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
