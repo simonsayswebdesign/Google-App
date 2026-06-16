@@ -3,6 +3,34 @@ import path from 'path';
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 
+// ---------------------------------------------------------------------------
+// API Key bootstrap — validate and pre-initialize the default GenAI client
+// ---------------------------------------------------------------------------
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+
+if (!GEMINI_API_KEY) {
+  console.error(
+    "[Server] ⚠️  WARNING: GEMINI_API_KEY environment variable is not set. " +
+    "Requests that do not supply a subscriber API key via the X-Gemini-API-Key " +
+    "header will be rejected. Set GEMINI_API_KEY in your Railway environment variables."
+  );
+} else {
+  console.log("[Server] ✅ GEMINI_API_KEY loaded successfully from environment.");
+}
+
+/**
+ * Module-level GoogleGenAI client initialised with the server's own API key.
+ * Will be `null` when GEMINI_API_KEY is absent so that the per-request handler
+ * can return a clear error instead of crashing.
+ */
+const defaultAi: GoogleGenAI | null = GEMINI_API_KEY
+  ? new GoogleGenAI({
+      apiKey: GEMINI_API_KEY,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+    })
+  : null;
+// ---------------------------------------------------------------------------
+
 const STYLE_DEFINITIONS: Record<string, string> = {
   "Modern SaaS": "Aesthetic: Linear, Raycast, Vercel. Font: Inter / Plus Jakarta Sans / Instrument Sans. Background: Deep Zinc (#09090b), Neutral Black (#050505), or Deep Violet (#0f0518). Elements: 1px borders (white/10). Tricks: Use Dot patterns, subtle Radial Glows, or Micro-grids. Use `[mask-image:linear-gradient(to_bottom,black,transparent)]` for fading lists. Vibe: Developer perfection. AVOID: Generic Blue.",
   "Neobrutalist": "Aesthetic: Gumroad, Figma. Font: Space Grotesk or Inter (font-sans with bold weights). Background: Stark White (#FFFFFF) or Neon Purple/Pink. Borders: Hard 2px/3px Black (border-black). Shadows: Hard offset (shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]). Interaction: `hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none transition-all`. Rounded: rounded-none. Vibe: Bold, raw.",
@@ -495,24 +523,27 @@ async function startServer() {
   app.post('/api/generate-section', async (req, res) => {
     try {
       const { prompt, options } = req.body;
-      const apiKey = (req.headers['x-gemini-api-key'] as string) || 
-                     (req.headers['x-gemini-key'] as string) || 
-                     req.body.subscriberApiKey || 
-                     process.env.GEMINI_API_KEY || 
-                     process.env.API_KEY;
+      const subscriberKey = (req.headers['x-gemini-api-key'] as string) ||
+                            (req.headers['x-gemini-key'] as string) ||
+                            req.body.subscriberApiKey;
 
-      if (!apiKey || apiKey === "undefined") {
-        return res.status(400).json({ error: "No Gemini API Key found. Please add your key in the Subscriber API Key settings box." });
+      // Resolve which client to use: prefer a per-request subscriber key, then
+      // fall back to the module-level client initialised from GEMINI_API_KEY.
+      let ai: GoogleGenAI;
+      if (subscriberKey && subscriberKey !== "undefined") {
+        ai = new GoogleGenAI({
+          apiKey: subscriberKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+      } else if (defaultAi) {
+        ai = defaultAi;
+      } else {
+        return res.status(400).json({
+          error:
+            "No Gemini API Key found. Set the GEMINI_API_KEY environment variable " +
+            "in Railway, or supply your own key via the Subscriber API Key settings.",
+        });
       }
-
-      const ai = new GoogleGenAI({ 
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
 
       const parts: any[] = [];
       
@@ -602,24 +633,27 @@ async function startServer() {
   app.post('/api/generate-full-page', async (req, res) => {
     try {
       const { prompt, style, isTransparent, themePreference, anchorHtml, model, animationStyle } = req.body;
-      const apiKey = (req.headers['x-gemini-api-key'] as string) || 
-                     (req.headers['x-gemini-key'] as string) || 
-                     req.body.subscriberApiKey || 
-                     process.env.GEMINI_API_KEY || 
-                     process.env.API_KEY;
+      const subscriberKey = (req.headers['x-gemini-api-key'] as string) ||
+                            (req.headers['x-gemini-key'] as string) ||
+                            req.body.subscriberApiKey;
 
-      if (!apiKey || apiKey === "undefined") {
-        return res.status(400).json({ error: "No Gemini API Key found. Please add your key in the Subscriber API Key settings box." });
+      // Resolve which client to use: prefer a per-request subscriber key, then
+      // fall back to the module-level client initialised from GEMINI_API_KEY.
+      let ai: GoogleGenAI;
+      if (subscriberKey && subscriberKey !== "undefined") {
+        ai = new GoogleGenAI({
+          apiKey: subscriberKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+      } else if (defaultAi) {
+        ai = defaultAi;
+      } else {
+        return res.status(400).json({
+          error:
+            "No Gemini API Key found. Set the GEMINI_API_KEY environment variable " +
+            "in Railway, or supply your own key via the Subscriber API Key settings.",
+        });
       }
-
-      const ai = new GoogleGenAI({ 
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
 
       let contextPart = "";
       if (anchorHtml) {
@@ -744,6 +778,14 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
+    if (GEMINI_API_KEY) {
+      console.log("[Server] ✅ Default Gemini client is ready (GEMINI_API_KEY is set).");
+    } else {
+      console.error(
+        "[Server] ⚠️  GEMINI_API_KEY is NOT set. The server will only work for " +
+        "requests that supply a subscriber API key via the X-Gemini-API-Key header."
+      );
+    }
   });
 }
 
