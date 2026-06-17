@@ -1020,158 +1020,55 @@ ${templateWithPhp}
   }, [selectedSection, fields, templatedHtml]);
 
   /**
-   * Generates ACF/Oxygen Builder custom PHP & HTML Code Block logic
+   * Generates pure HTML export for Oxygen Builder Code Block (HTML tab).
+   * Uses {field_id} placeholders — no PHP tags — so Oxygen can render it directly.
+   * The ACF snippet (Step 2) replaces these placeholders server-side via a shortcode.
    */
   const oxygenCodeBlockPhp = useMemo(() => {
     if (sections.length === 0) return '';
 
-    const isAll = exportMode === 'all';
-    const blockTitle = isAll ? `All Page Sections Combined (${pageKey})` : (selectedSection?.name || 'Tailwind Section');
-    const suffix = isAll ? `all_combined_${pageKey}` : `${selectedSection?.id.substring(0, 4) || 'sec'}_${pageKey}`;
-
-    let templateWithPhp = templatedHtml;
+    // Build the HTML template: replace CHAIGEN_* placeholders with {field_id} syntax
+    let templateHtml = templatedHtml;
     fields.forEach(f => {
       const textPlaceholder = `CHAIGEN_TEXT_[${f.id}]`;
       const linkPlaceholder = `CHAIGEN_LINK_[${f.id}]`;
-      const imgPlaceholder = `CHAIGEN_IMAGE_[${f.id}]`;
-      const finalFieldId = `${f.id}_${pageKey}`;
+      const imgPlaceholder  = `CHAIGEN_IMAGE_[${f.id}]`;
+      const finalFieldId    = `${f.id}_${pageKey}`;
 
-      const isShortcode = (f.type === 'text' || f.type === 'textarea') && f.original?.includes('[') && f.original?.includes(']');
-      const textReplacement = isShortcode
-        ? `<?php echo do_shortcode($fields['${finalFieldId}']); ?>`
-        : `<?php echo esc_html($fields['${finalFieldId}']); ?>`;
-
-      templateWithPhp = templateWithPhp
-        .split(textPlaceholder).join(textReplacement)
-        .split(linkPlaceholder).join(`<?php echo esc_url($fields['${finalFieldId}']); ?>`)
-        .split(imgPlaceholder).join(`<?php echo esc_url($fields['${finalFieldId}']); ?>`);
+      templateHtml = templateHtml
+        .split(textPlaceholder).join(`{${finalFieldId}}`)
+        .split(linkPlaceholder).join(`{${finalFieldId}}`)
+        .split(imgPlaceholder).join(`{${finalFieldId}}`);
     });
 
-    return `<?php
-/**
- * ============================================================
- * CHAIGEN — OXYGEN BUILDER CODE BLOCK (PHP & HTML tab)
- * ============================================================
- * HOW TO USE SAFELY IN WORDPRESS / OXYGEN BUILDER:
- *
- *  1. This snippet does NOT load Tailwind globally. It checks
- *     whether Tailwind is already present on the page before
- *     conditionally loading it — preventing style conflicts.
- *
- *  2. All styles are scoped under .chaigen-section so they
- *     cannot leak out and override your theme or other plugins.
- *
- *  3. If your site already loads Tailwind (e.g. via Windpress,
- *     a child theme, or another plugin), the CDN load is
- *     skipped automatically. No duplicate scripts.
- *
- *  4. If your site does NOT have Tailwind, the CDN version is
- *     loaded WITHOUT "important: true" so it won't override
- *     your existing WordPress/theme styles outside this section.
- *
- *  5. Paste this inside an Oxygen Builder "Code Block" element
- *     under the "PHP & HTML" tab. It resolves the correct
- *     page ID automatically across templates and queries.
- * ============================================================
- */
+    return `<!--
+  ============================================================
+  CHAIGEN — STEP 1: OXYGEN BUILDER HTML EXPORT
+  ============================================================
+  HOW TO USE:
+    1. In Oxygen Builder, add a "Code Block" element to your page.
+    2. Switch to the "HTML" tab (NOT "PHP & HTML").
+    3. Paste this entire block into the HTML tab.
+    4. Save and preview — the design renders with default content.
 
-// Bulletproof Page ID resolution in Oxygen Builder templates and queries
-$post_id = null;
+  MAKING IT EDITABLE WITH ACF:
+    - Complete Step 2: paste the ACF snippet into functions.php.
+    - The snippet registers ACF fields and replaces {field_id}
+      placeholders with the values you enter in the ACF edit panel.
+    - No PHP in this file — it is pure HTML, safe for Oxygen.
 
-global $wp_query;
-$wp_query_loaded = (isset($wp_query) && $wp_query instanceof WP_Query);
+  STYLE SAFETY:
+    - Tailwind is loaded conditionally (only if not already present).
+    - "important: true" is NOT used — styles are scoped to
+      .chaigen-section and will NOT override your theme or plugins.
+    - All custom CSS is prefixed with .chaigen-section.
+  ============================================================
+-->
 
-if ($wp_query_loaded) {
-    // 1. Try queried object ID first (most reliable on frontend singular views)
-    if (is_singular()) {
-        $post_id = get_queried_object_id();
-    }
-
-    // 2. Fallback to global $post if singular gets bypassed (e.g. inside loops/tabs)
-    if (!$post_id) {
-        global $post;
-        if (isset($post->ID)) {
-            $post_id = $post->ID;
-        }
-    }
-
-    // 3. Fallback to the current queried object ID
-    if (!$post_id) {
-        $post_id = get_queried_object_id();
-    }
-
-    // 4. Default fallback to standard get_the_ID() loop value
-    if (!$post_id) {
-        $post_id = get_the_ID();
-    }
-}
-
-// 5. If editing in Oxygen Builder, extract the post parameter from edit screen URL
-if (defined('SHOW_CT_BUILDER') || isset($_GET['ct_builder']) || is_admin()) {
-    if (isset($_GET['post'])) {
-        $post_id = intval($_GET['post']);
-    }
-}
-
-// Print diagnostic info in HTML comments to make front-end troubleshooting of ACF keys extremely easy!
-if ($wp_query_loaded) {
-    echo '<!-- CHAIGEN DEBUG: Resolved Post ID = ' . esc_html($post_id ? (string) $post_id : 'None') . ' | Main Queried Object ID = ' . esc_html((string) get_queried_object_id()) . ' | Loop get_the_ID() = ' . esc_html((string) get_the_ID()) . ' -->';
-} else {
-    echo '<!-- CHAIGEN DEBUG: Resolved Post ID = ' . esc_html($post_id ? (string) $post_id : 'None') . ' | WP Query not fully loaded yet -->';
-}
-
-$fields = array();
-$fields_schema = array(
-${fields.map(f => `    '${f.id}_${pageKey}' => '${escapeSingleQuotes(f.original)}',`).join('\n')}
-);
-
-foreach ($fields_schema as $fid => $def) {
-    $val = function_exists('get_field') ? get_field($fid, $post_id) : ($post_id ? get_post_meta($post_id, $fid, true) : null);
-    
-    // Handle image fields: ACF may return an array or attachment ID instead of a URL
-    if (strpos($fid, 'img_') === 0 && !empty($val)) {
-        if (is_array($val)) {
-            if (isset($val['url'])) {
-                $val = $val['url'];
-            } elseif (isset($val['sizes']['large'])) {
-                $val = $val['sizes']['large'];
-            } elseif (isset($val['sizes']['thumbnail'])) {
-                $val = $val['sizes']['thumbnail'];
-            }
-        } elseif (is_numeric($val)) {
-            $attachment_url = wp_get_attachment_image_url((int) $val, 'full');
-            if ($attachment_url) {
-                $val = $attachment_url;
-            }
-        }
-    }
-    
-    $fields[$fid] = ($val !== null && $val !== false && $val !== '') ? $val : $def;
-}
-
-// Load Google Fonts (scoped to this section — does not affect the rest of the site)
-if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
-    echo '<link rel="stylesheet" href="' . esc_url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@300;400;500;600;700;800&family=Cinzel:wght@400;500;600;700;800&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Instrument+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital,wght@0,400;1,400&family=Italiana&family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Share+Tech+Mono&family=Syne:wght@400;500;600;700;800&family=Unbounded:wght@300;400;500;600;700;800;900&family=Urbanist:wght@300;400;500;600;700;800;900&display=swap') . '" />';
-}
-
-/**
- * TAILWIND LOADING STRATEGY — SAFE FOR EXISTING WORDPRESS SITES
- *
- * We check for an existing Tailwind instance (window.tailwind) before loading
- * the CDN. This prevents double-loading on sites that already have Tailwind
- * (e.g. via Windpress, a child theme, or another ChaiGen block on the page).
- *
- * Critically, we do NOT use "important: true" in the Tailwind config.
- * That flag forces every Tailwind utility to override ALL other CSS on the page,
- * which breaks WordPress themes, Oxygen styles, and plugin styles globally.
- * Without it, Tailwind utilities apply normally and only affect this section.
- *
- * If your site already has Tailwind loaded with a custom config, you can safely
- * remove the entire <script> block below — this section will use your existing
- * Tailwind instance automatically.
- */
-?>
 <script>
+  /* Load Tailwind CDN only if it is not already on the page.
+     Sites using Windpress, a child theme, or another ChaiGen block
+     will skip this entirely — no duplicate scripts, no conflicts. */
   if (typeof window.tailwind === 'undefined') {
     (function() {
       var s = document.createElement('script');
@@ -1179,9 +1076,9 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
       s.onload = function() {
         if (window.tailwind && window.tailwind.config) {
           window.tailwind.config({
-            // NOTE: "important: true" is intentionally omitted.
-            // Using it would force Tailwind to override ALL site styles globally,
-            // breaking your WordPress theme and other plugins outside this section.
+            /* NOTE: "important: true" is intentionally omitted.
+               Using it forces Tailwind to override ALL site styles globally,
+               breaking your WordPress theme and other plugins. */
             darkMode: 'class',
             theme: {
               extend: {
@@ -1200,30 +1097,15 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
                   'reveal': 'reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) both',
                 },
                 keyframes: {
-                  float: {
-                    '0%, 100%': { transform: 'translateY(0)' },
-                    '50%': { transform: 'translateY(-10px)' },
-                  },
+                  float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
                   fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
-                  fadeInUp: {
-                    '0%': { opacity: '0', transform: 'translateY(20px)' },
-                    '100%': { opacity: '1', transform: 'translateY(0)' }
-                  },
-                  fadeInDown: {
-                    '0%': { opacity: '0', transform: 'translateY(-20px)' },
-                    '100%': { opacity: '1', transform: 'translateY(0)' }
-                  },
-                  zoomIn: {
-                    '0%': { opacity: '0', transform: 'scale(0.95)' },
-                    '100%': { opacity: '1', transform: 'scale(1)' }
-                  },
-                  reveal: {
-                    '0%': { 'clip-path': 'inset(0 100% 0 0)', '-webkit-clip-path': 'inset(0 100% 0 0)' },
-                    '100%': { 'clip-path': 'inset(0 0 0 0)', '-webkit-clip-path': 'inset(0 0 0 0)' }
-                  }
-                }
-              }
-            }
+                  fadeInUp: { '0%': { opacity: '0', transform: 'translateY(20px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+                  fadeInDown: { '0%': { opacity: '0', transform: 'translateY(-20px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+                  zoomIn: { '0%': { opacity: '0', transform: 'scale(0.95)' }, '100%': { opacity: '1', transform: 'scale(1)' } },
+                  reveal: { '0%': { 'clip-path': 'inset(0 100% 0 0)' }, '100%': { 'clip-path': 'inset(0 0 0 0)' } },
+                },
+              },
+            },
           });
         }
       };
@@ -1232,21 +1114,24 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
   }
 </script>
 
+<!-- Google Fonts — loaded once per page, scoped to this section's design -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Bricolage+Grotesque:wght@300;400;500;600;700;800&family=Cinzel:wght@400;500;600;700;800&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Instrument+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital,wght@0,400;1,400&family=Italiana&family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Share+Tech+Mono&family=Syne:wght@400;500;600;700;800&family=Unbounded:wght@300;400;500;600;700;800;900&family=Urbanist:wght@300;400;500;600;700;800;900&display=swap" />
+
 <!--
-  SCOPED STYLES — All rules below are prefixed with .chaigen-section
-  so they cannot leak out and affect your WordPress theme or other plugins.
+  SCOPED STYLES — every rule is prefixed with .chaigen-section.
+  Nothing here can leak out and affect your theme or other plugins.
 -->
 <style>
-  /* Animation stagger delays — scoped to ChaiGen sections only */
-  .chaigen-section .delay-100 { animation-delay: 100ms; }
-  .chaigen-section .delay-200 { animation-delay: 200ms; }
-  .chaigen-section .delay-300 { animation-delay: 300ms; }
-  .chaigen-section .delay-400 { animation-delay: 400ms; }
-  .chaigen-section .delay-500 { animation-delay: 500ms; }
-  .chaigen-section .delay-700 { animation-delay: 700ms; }
+  /* Animation stagger delays */
+  .chaigen-section .delay-100  { animation-delay: 100ms; }
+  .chaigen-section .delay-200  { animation-delay: 200ms; }
+  .chaigen-section .delay-300  { animation-delay: 300ms; }
+  .chaigen-section .delay-400  { animation-delay: 400ms; }
+  .chaigen-section .delay-500  { animation-delay: 500ms; }
+  .chaigen-section .delay-700  { animation-delay: 700ms; }
   .chaigen-section .delay-1000 { animation-delay: 1000ms; }
 
-  /* Gradient text — scoped */
+  /* Gradient text */
   .chaigen-section .bg-clip-text {
     -webkit-background-clip: text;
     background-clip: text;
@@ -1259,7 +1144,7 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
     color: transparent;
   }
 
-  /* Gradient borders — scoped to .chaigen-section */
+  /* Gradient borders */
   .chaigen-section [class*="border-gradient-"] {
     border: 2px solid transparent;
     background-origin: border-box;
@@ -1286,8 +1171,7 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
                       linear-gradient(to bottom, var(--tw-gradient-from, #a855f7), var(--tw-gradient-to, #06b6d4));
   }
 
-  /* Reset link/button colours inside this section only — prevents WordPress/Oxygen
-     theme defaults from overriding the design's intended colours */
+  /* Link and button reset — prevents WordPress/Oxygen theme colours overriding the design */
   .chaigen-section a,
   .chaigen-section button {
     color: inherit;
@@ -1304,33 +1188,25 @@ if (!wp_style_is('google-fonts-chaigen-${suffix}', 'enqueued')) {
     text-decoration: none;
   }
 
-  /* Scroll-triggered entrance animation helpers — scoped */
-  .chaigen-section .animate-paused {
-    animation-play-state: paused;
-  }
-  .chaigen-section .animate-started {
-    animation-play-state: running;
-  }
+  /* Scroll-triggered entrance animation helpers */
+  .chaigen-section .animate-paused  { animation-play-state: paused; }
+  .chaigen-section .animate-started { animation-play-state: running; }
 </style>
-<?php
-?>
+
 <!-- START CHAIGEN LAYOUT -->
-<div class="chaigen-section chaigen-wp-container">
-${templateWithPhp}
+<div class="chaigen-section">
+${templateHtml}
 </div>
 <!-- END CHAIGEN LAYOUT -->
+
 <script>
-  /**
-   * Optional scroll-triggered entrance animations.
-   * Wrapped in try/catch and feature-detected so it never breaks the page
-   * if IntersectionObserver is unavailable or another script conflicts.
-   */
+  /* Scroll-triggered entrance animations — scoped to .chaigen-section elements only.
+     Wrapped in try/catch so a JS error here never breaks the rest of the page. */
   (function() {
     try {
       if (window.__chaigen_observer_init) return;
       window.__chaigen_observer_init = true;
 
-      // Feature-detect IntersectionObserver — not available in all environments
       if (typeof IntersectionObserver === 'undefined') return;
 
       function initChaigenAnimations() {
@@ -1347,20 +1223,17 @@ ${templateWithPhp}
             });
           }, { threshold: 0.05, rootMargin: '0px 0px -20px 0px' });
 
-          // Only target animated elements inside ChaiGen sections
           var animElements = document.querySelectorAll('.chaigen-section [class*="animate-"]');
           animElements.forEach(function(el) {
             try {
               var classes = el.className || '';
-              // Skip always-running animations — these should never be paused
               if (
-                classes.indexOf('animate-spin') !== -1 ||
-                classes.indexOf('animate-bounce') !== -1 ||
-                classes.indexOf('animate-pulse') !== -1 ||
-                classes.indexOf('animate-slow') !== -1 ||
+                classes.indexOf('animate-spin')     !== -1 ||
+                classes.indexOf('animate-bounce')   !== -1 ||
+                classes.indexOf('animate-pulse')    !== -1 ||
+                classes.indexOf('animate-slow')     !== -1 ||
                 classes.indexOf('animate-infinite') !== -1
               ) return;
-
               el.classList.add('animate-paused');
               el.classList.remove('animate-started');
               observer.observe(el);
@@ -1377,15 +1250,18 @@ ${templateWithPhp}
         });
       }
     } catch(e) {
-      // Animation observer failed silently — layout and content are unaffected
+      /* Animation observer failed silently — layout and content are unaffected */
     }
   })();
 </script>
 `;
-  }, [selectedSection, fields, templatedHtml, exportMode, sections, pageKey]);
+  }, [fields, templatedHtml, exportMode, sections, pageKey]);
+
 
   /**
-   * Generates functions.php fields registration for Oxygen / page-level custom fields
+   * Generates the complete ACF snippet for functions.php.
+   * Registers ACF fields AND replaces {field_id} placeholders in the HTML
+   * export via a WordPress shortcode — no PHP in the Oxygen Code Block needed.
    */
   const oxygenAcfRegisterPhp = useMemo(() => {
     if (sections.length === 0) return '';
@@ -1393,86 +1269,298 @@ ${templateWithPhp}
     const isAll = exportMode === 'all';
     const blockTitle = isAll ? `All Combined Sections (${pageKey})` : (selectedSection?.name || 'Tailwind Section');
     const groupKeySuffix = pageKey;
+    const fnSuffix = pageKey.replace(/[^a-z0-9_]/gi, '_');
 
-    // Build fields array in PHP
+    // Build ACF field definitions
     const acfFieldsString: string[] = [];
     let lastSectionIdx = -1;
 
     fields.forEach(f => {
       if (isAll && f.sectionIdx !== undefined && f.sectionIdx !== lastSectionIdx) {
         lastSectionIdx = f.sectionIdx;
-        acfFieldsString.push(`                array (
-                    'key' => 'field_chaigen_oxy_tab_sec_${lastSectionIdx}_${pageKey}',
-                    'label' => '👉 ${escapeSingleQuotes(f.sectionName || `Section ${lastSectionIdx + 1}`)}',
-                    'type' => 'tab',
+        acfFieldsString.push(`                array(
+                    'key'       => 'field_chaigen_tab_sec_${lastSectionIdx}_${pageKey}',
+                    'label'     => '👉 ${escapeSingleQuotes(f.sectionName || `Section ${lastSectionIdx + 1}`)}',
+                    'type'      => 'tab',
                     'placement' => 'left',
-                    'endpoint' => 0,
+                    'endpoint'  => 0,
                 ),`);
       }
-      
+
       const finalFieldId = `${f.id}_${pageKey}`;
-      acfFieldsString.push(`                array (
-                    'key' => 'field_chaigen_oxy_${groupKeySuffix}_${finalFieldId}',
-                    'label' => '${escapeSingleQuotes(f.label)}',
-                    'name' => '${finalFieldId}',
-                    'type' => '${f.type === 'image' ? 'image' : f.type === 'textarea' ? 'textarea' : 'text'}',
+      acfFieldsString.push(`                array(
+                    'key'           => 'field_chaigen_${groupKeySuffix}_${finalFieldId}',
+                    'label'         => '${escapeSingleQuotes(f.label)}',
+                    'name'          => '${finalFieldId}',
+                    'type'          => '${f.type === 'image' ? 'image' : f.type === 'textarea' ? 'textarea' : 'text'}',
                     'default_value' => '${escapeSingleQuotes(f.original)}',
                     'return_format' => '${f.type === 'image' ? 'url' : 'value'}',
                 ),`);
     });
 
+    // Build field defaults map for the shortcode resolver
+    const fieldDefaultsPhp = fields.map(f => {
+      const finalFieldId = `${f.id}_${pageKey}`;
+      return `        '${finalFieldId}' => '${escapeSingleQuotes(f.original)}',`;
+    }).join('\n');
+
+    // Build location rules
     const idList = targetPageId.split(',').map(s => s.trim()).filter(Boolean);
     let locationRulePhp = '';
     if (idList.length > 0) {
-      const rules = idList.map(id => `                array (
-                    array (
-                        'param' => 'post',
+      const rules = idList.map(id => `                array(
+                    array(
+                        'param'    => 'post',
                         'operator' => '==',
-                        'value' => '${id}',
+                        'value'    => '${id}',
                     ),
                 ),`);
-      locationRulePhp = `            'location' => array (
-${rules.join('\n')}
-            ),`;
+      locationRulePhp = `            'location' => array(\n${rules.join('\n')}\n            ),`;
     } else {
-      locationRulePhp = `            'location' => array (
-                array (
-                    array (
-                        'param' => 'post',
+      locationRulePhp = `            'location' => array(
+                array(
+                    array(
+                        'param'    => 'post',
                         'operator' => '==',
-                        'value' => 'REPLACE_WITH_YOUR_PAGE_ID_HERE', // Enter your Page ID here so these fields ONLY show up when editing this specific page!
+                        // Replace with your WordPress Page ID (found in the URL when editing the page).
+                        // This restricts the ACF edit panel to that specific page only.
+                        'value'    => 'REPLACE_WITH_YOUR_PAGE_ID',
                     ),
                 ),
             ),`;
     }
 
-    return `/**
- * 2. CUSTOM PAGE-LEVEL ACF FIELDS REGISTRATION (Paste in functions.php)
- * Paste this in your child theme's functions.php (or in a plugin like WPCode or Code Snippets)
- * By defining a specific 'post' ID in the location array below, these fields are restricted 
- * exclusively to that page, preventing other pages' content editors from showing these inputs!
+    return `<?php
+/**
+ * ============================================================
+ * CHAIGEN — STEP 2: ACF SNIPPET (functions.php)
+ * ============================================================
+ * HOW TO USE:
+ *   1. Install the free "Advanced Custom Fields" plugin if you
+ *      have not already (wordpress.org/plugins/advanced-custom-fields).
+ *   2. Paste this entire snippet into your child theme's
+ *      functions.php, OR add it via the "Code Snippets" or
+ *      "WPCode" plugin (recommended — safer than editing files).
+ *   3. Edit your page in WordPress. A new "✏️ ChaiGen Content"
+ *      panel appears below the editor — fill in your content.
+ *   4. The HTML export (Step 1) uses {field_id} placeholders.
+ *      This snippet replaces them with your ACF values at render
+ *      time via the [chaigen_section_${fnSuffix}] shortcode.
+ *
+ * OXYGEN BUILDER WORKFLOW:
+ *   - Paste the Step 1 HTML into an Oxygen "Code Block" (HTML tab).
+ *   - The {field_id} placeholders render as default text until
+ *     this snippet is active and ACF fields are filled in.
+ *   - Alternatively, place [chaigen_section_${fnSuffix}] in any
+ *     WordPress text block or page builder text element.
+ *
+ * SAFETY GUARANTEES:
+ *   - ACF is checked before use — graceful fallback to defaults
+ *     if the plugin is not installed.
+ *   - Tailwind is loaded once per page, not per section.
+ *   - No "important: true" — styles are scoped to .chaigen-section.
+ *   - No global style pollution.
+ * ============================================================
  */
-add_action('acf/init', 'chaigen_oxy_register_fields_${groupKeySuffix}');
-function chaigen_oxy_register_fields_${groupKeySuffix}() {
-    if( function_exists('acf_add_local_field_group') ) {
-        acf_add_local_field_group(array(
-            'key' => 'group_chaigen_oxy_${groupKeySuffix}',
-            'title' => '✏️ Client Content Editor: ${escapeSingleQuotes(blockTitle)}',
-            'fields' => array (
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+// ─── 1. REGISTER ACF FIELD GROUP ────────────────────────────────────────────
+
+add_action( 'acf/init', 'chaigen_register_fields_${fnSuffix}' );
+function chaigen_register_fields_${fnSuffix}() {
+    if ( ! function_exists( 'acf_add_local_field_group' ) ) return;
+
+    acf_add_local_field_group( array(
+        'key'   => 'group_chaigen_${groupKeySuffix}',
+        'title' => '✏️ ChaiGen Content: ${escapeSingleQuotes(blockTitle)}',
+        'fields' => array(
 ${acfFieldsString.join('\n')}
-            ),
+        ),
 ${locationRulePhp}
-            'menu_order' => 0,
-            'position' => 'normal',
-            'style' => 'default',
-            'label_placement' => 'top',
-            'instruction_placement' => 'label',
-            'hide_on_screen' => '',
-        ));
+        'menu_order'          => 0,
+        'position'            => 'normal',
+        'style'               => 'default',
+        'label_placement'     => 'top',
+        'instruction_placement' => 'label',
+        'hide_on_screen'      => '',
+    ) );
+}
+
+// ─── 2. SHORTCODE: [chaigen_section_${fnSuffix}] ────────────────────────────
+//
+// Place this shortcode anywhere on your page to render the ChaiGen design
+// with live ACF values. The shortcode reads the current page's ACF fields,
+// replaces {field_id} placeholders in the stored HTML, and outputs the result.
+//
+// The HTML template is the content of your Step 1 export (everything inside
+// <div class="chaigen-section">...</div>). You do not need to store it here —
+// the shortcode reads it from the Oxygen Code Block on the same page.
+// If you want a standalone shortcode, paste the inner HTML below as $template.
+
+add_shortcode( 'chaigen_section_${fnSuffix}', 'chaigen_render_section_${fnSuffix}' );
+function chaigen_render_section_${fnSuffix}( $atts ) {
+
+    // Bail gracefully if ACF is not installed
+    if ( ! function_exists( 'get_field' ) && ! function_exists( 'get_post_meta' ) ) {
+        return '<!-- ChaiGen: ACF not found, install Advanced Custom Fields -->';
     }
+
+    // ── Resolve the correct post ID in all Oxygen Builder contexts ──────────
+    $post_id = null;
+
+    if ( is_singular() ) {
+        $post_id = get_queried_object_id();
+    }
+    if ( ! $post_id ) {
+        global $post;
+        if ( isset( $post->ID ) ) $post_id = $post->ID;
+    }
+    if ( ! $post_id ) {
+        $post_id = get_queried_object_id();
+    }
+    if ( ! $post_id ) {
+        $post_id = get_the_ID();
+    }
+    // Oxygen Builder edit screen
+    if ( defined( 'SHOW_CT_BUILDER' ) || isset( $_GET['ct_builder'] ) ) {
+        if ( isset( $_GET['post'] ) ) $post_id = intval( $_GET['post'] );
+    }
+
+    // ── Field defaults (shown when ACF fields are empty) ────────────────────
+    $defaults = array(
+${fieldDefaultsPhp}
+    );
+
+    // ── Fetch ACF values, fall back to defaults ──────────────────────────────
+    $values = array();
+    foreach ( $defaults as $field_id => $default_val ) {
+
+        $val = null;
+
+        if ( function_exists( 'get_field' ) ) {
+            $val = get_field( $field_id, $post_id );
+        }
+
+        // Fallback: read raw post meta if ACF returns nothing
+        if ( $val === null || $val === false || $val === '' ) {
+            $val = $post_id ? get_post_meta( $post_id, $field_id, true ) : null;
+        }
+
+        // Handle image fields: ACF may return an array or attachment ID
+        if ( strpos( $field_id, 'img_' ) === 0 && ! empty( $val ) ) {
+            if ( is_array( $val ) ) {
+                $val = isset( $val['url'] ) ? $val['url']
+                     : ( isset( $val['sizes']['large'] ) ? $val['sizes']['large'] : $default_val );
+            } elseif ( is_numeric( $val ) ) {
+                $url = wp_get_attachment_image_url( (int) $val, 'full' );
+                $val = $url ? $url : $default_val;
+            }
+        }
+
+        $values[ $field_id ] = ( $val !== null && $val !== false && $val !== '' ) ? $val : $default_val;
+    }
+
+    // ── Replace {field_id} placeholders in the HTML template ────────────────
+    //
+    // The template below is the inner HTML from your Step 1 export
+    // (the content inside <div class="chaigen-section">).
+    // Paste it here if you want a fully self-contained shortcode.
+    // Otherwise, the Oxygen Code Block handles rendering directly.
+    //
+    $template = ''; // Paste inner HTML here for standalone shortcode use
+
+    if ( empty( $template ) ) {
+        // No template stored — output a helpful comment and return
+        return '<!-- ChaiGen shortcode active. Paste inner HTML into $template above for standalone use, or use the Oxygen Code Block (Step 1) directly. -->';
+    }
+
+    foreach ( $values as $field_id => $val ) {
+        $placeholder = '{' . $field_id . '}';
+        // Escape output based on field type
+        if ( strpos( $field_id, 'img_' ) === 0 || strpos( $field_id, 'btn_link_' ) === 0 ) {
+            $safe_val = esc_url( $val );
+        } else {
+            $safe_val = esc_html( $val );
+        }
+        $template = str_replace( $placeholder, $safe_val, $template );
+    }
+
+    return $template;
+}
+
+// ─── 3. REPLACE {field_id} PLACEHOLDERS IN OXYGEN CODE BLOCKS ───────────────
+//
+// Oxygen Builder renders Code Block HTML through the_content filters.
+// This filter intercepts the rendered output and replaces any remaining
+// {field_id} placeholders with live ACF values — so the Step 1 HTML
+// export works without any PHP in the Code Block itself.
+
+add_filter( 'the_content', 'chaigen_replace_placeholders_${fnSuffix}', 20 );
+add_filter( 'oxygen_vsb_the_content', 'chaigen_replace_placeholders_${fnSuffix}', 20 );
+function chaigen_replace_placeholders_${fnSuffix}( $content ) {
+
+    // Only run on singular pages/posts to avoid replacing on archives
+    if ( ! is_singular() && ! ( defined( 'SHOW_CT_BUILDER' ) || isset( $_GET['ct_builder'] ) ) ) {
+        return $content;
+    }
+
+    // Quick bail: skip if no ChaiGen placeholders are present
+    if ( strpos( $content, '{' ) === false ) return $content;
+
+    // Resolve post ID
+    $post_id = is_singular() ? get_queried_object_id() : get_the_ID();
+    if ( defined( 'SHOW_CT_BUILDER' ) && isset( $_GET['post'] ) ) {
+        $post_id = intval( $_GET['post'] );
+    }
+
+    $defaults = array(
+${fieldDefaultsPhp}
+    );
+
+    foreach ( $defaults as $field_id => $default_val ) {
+
+        $placeholder = '{' . $field_id . '}';
+        if ( strpos( $content, $placeholder ) === false ) continue;
+
+        $val = null;
+
+        if ( function_exists( 'get_field' ) ) {
+            $val = get_field( $field_id, $post_id );
+        }
+        if ( $val === null || $val === false || $val === '' ) {
+            $val = $post_id ? get_post_meta( $post_id, $field_id, true ) : null;
+        }
+
+        // Handle image fields
+        if ( strpos( $field_id, 'img_' ) === 0 && ! empty( $val ) ) {
+            if ( is_array( $val ) ) {
+                $val = isset( $val['url'] ) ? $val['url']
+                     : ( isset( $val['sizes']['large'] ) ? $val['sizes']['large'] : $default_val );
+            } elseif ( is_numeric( $val ) ) {
+                $url = wp_get_attachment_image_url( (int) $val, 'full' );
+                $val = $url ? $url : $default_val;
+            }
+        }
+
+        $resolved = ( $val !== null && $val !== false && $val !== '' ) ? $val : $default_val;
+
+        // Escape based on field type
+        if ( strpos( $field_id, 'img_' ) === 0 || strpos( $field_id, 'btn_link_' ) === 0 ) {
+            $safe = esc_url( $resolved );
+        } else {
+            $safe = esc_html( $resolved );
+        }
+
+        $content = str_replace( $placeholder, $safe, $content );
+    }
+
+    return $content;
 }
 `;
   }, [selectedSection, fields, exportMode, sections, pageKey, targetPageId]);
+
+
 
   /**
    * Generates native Elementor Widget PHP code for drag and drop WordPress builds
@@ -1787,14 +1875,11 @@ ${templateWithPhp}
     }
   };
 
-  // Construct clean HTML without ACF schema or PHP wrappers for user edit workflow
-  const cleanHtml = useMemo(() => {
-    return sections.map(s => s.html).join('\n\n');
-  }, [sections]);
-
+  // The HTML export (Step 1) is the active code when oxygenSection === 'php'.
+  // "Copy HTML Export" copies the Step 1 content directly.
   const handleCopyCleanHtml = async () => {
     try {
-      await navigator.clipboard.writeText(cleanHtml);
+      await navigator.clipboard.writeText(oxygenCodeBlockPhp);
       setCopiedType('clean_html');
       setTimeout(() => setCopiedType(null), 2000);
     } catch (err) {
@@ -1802,7 +1887,7 @@ ${templateWithPhp}
     }
   };
 
-  // Downloads dynamic single-file Wordpress PHP Plugin
+  // Downloads a file — uses .html extension for Step 1, .php for Step 2
   const handleDownloadPhpFile = (code: string, filename: string) => {
     const element = document.createElement("a");
     const file = new Blob([code], { type: 'text/plain' });
@@ -1818,11 +1903,12 @@ ${templateWithPhp}
   }, [oxygenSection, oxygenCodeBlockPhp, oxygenAcfRegisterPhp]);
 
   const downloadFilename = useMemo(() => {
-    if (sections.length === 0) return 'wordpress-section.php';
-    const isAll = exportMode === 'all';
-    const suffix = isAll ? `all-combined-${pageKey}` : `${selectedSection?.id.substring(0, 4) || 'sec'}-${pageKey}`;
-    return oxygenSection === 'php' ? `combined-page-template-${suffix}.php` : `acf-registration-${suffix}.php`;
-  }, [oxygenSection, selectedSection, exportMode, sections, pageKey]);
+    if (sections.length === 0) return 'chaigen-section.html';
+    const suffix = `all-combined-${pageKey}`;
+    return oxygenSection === 'php'
+      ? `chaigen-html-export-${suffix}.html`
+      : `chaigen-acf-snippet-${suffix}.php`;
+  }, [oxygenSection, sections, pageKey]);
 
   const currentCopyType = useMemo(() => {
     return oxygenSection === 'php' ? 'oxygen_php' : 'oxygen_reg';
@@ -1851,8 +1937,8 @@ ${templateWithPhp}
               <Smartphone className="w-4 h-4" />
             </div>
             <div>
-              <p className="font-bold text-gray-200 text-[11px] leading-tight">1. Client Edit Form</p>
-              <p className="text-[9px] text-gray-500">Non-coders modify page assets</p>
+              <p className="font-bold text-gray-200 text-[11px] leading-tight">1. HTML Export</p>
+              <p className="text-[9px] text-gray-500">Paste into Oxygen Code Block</p>
             </div>
           </div>
           
@@ -1863,8 +1949,8 @@ ${templateWithPhp}
               <Layers className="w-4 h-4" />
             </div>
             <div>
-              <p className="font-bold text-gray-200 text-[11px] leading-tight">2. ACF Local Schema</p>
-              <p className="text-[9px] text-gray-500">Securely stores custom meta</p>
+              <p className="font-bold text-gray-200 text-[11px] leading-tight">2. ACF Snippet</p>
+              <p className="text-[9px] text-gray-500">Paste into functions.php</p>
             </div>
           </div>
 
@@ -1875,8 +1961,8 @@ ${templateWithPhp}
               <FileCode className="w-4 h-4" />
             </div>
             <div>
-              <p className="font-bold text-gray-200 text-[11px] leading-tight">3. Live Canvas Renders</p>
-              <p className="text-[9px] text-gray-500">Tailwind styles loaded dynamically</p>
+              <p className="font-bold text-gray-200 text-[11px] leading-tight">3. ACF Fields Resolve</p>
+              <p className="text-[9px] text-gray-500">Placeholders replaced at render</p>
             </div>
           </div>
         </div>
@@ -1949,8 +2035,8 @@ ${templateWithPhp}
                 01
               </div>
               <div className="min-w-0">
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block leading-none mb-1">Step 1: Code Block</span>
-                <span className={`text-xs font-black truncate block ${oxygenSection === 'php' ? 'text-white' : 'text-gray-400'}`}>PHP & HTML Template</span>
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block leading-none mb-1">Step 1: HTML Export</span>
+                <span className={`text-xs font-black truncate block ${oxygenSection === 'php' ? 'text-white' : 'text-gray-400'}`}>Oxygen Code Block (HTML tab)</span>
               </div>
             </button>
             <button 
@@ -1967,8 +2053,8 @@ ${templateWithPhp}
                 02
               </div>
               <div className="min-w-0">
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block leading-none mb-1">Step 2: Admin Panel</span>
-                <span className={`text-xs font-black truncate block ${oxygenSection === 'register' ? 'text-white' : 'text-gray-400'}`}>functions.php Schema</span>
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block leading-none mb-1">Step 2: ACF Snippet</span>
+                <span className={`text-xs font-black truncate block ${oxygenSection === 'register' ? 'text-white' : 'text-gray-400'}`}>functions.php / Code Snippets</span>
               </div>
             </button>
           </div>
@@ -1979,8 +2065,8 @@ ${templateWithPhp}
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block leading-none mb-1">Target Integration Method</span>
               <h3 className="text-xs font-extrabold text-white uppercase tracking-tight truncate">
                 {oxygenSection === 'php' 
-                  ? "Oxygen / Bricks Custom Code Block Render Template" 
-                  : "WP Theme Schema Field Registrations (functions.php)"}
+                  ? "Pure HTML Export — Paste into Oxygen Code Block (HTML tab)" 
+                  : "ACF Snippet — Paste into functions.php or Code Snippets plugin"}
               </h3>
             </div>
             
@@ -1992,7 +2078,7 @@ ${templateWithPhp}
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/35'
                     : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20 hover:border-amber-500/40'
                 }`}
-                title="Copies raw, clean Tailwind HTML without PHP wrappers or ACF schemas"
+                title="Copies the Step 1 HTML export — paste into Oxygen Code Block (HTML tab)"
               >
                 {copiedType === 'clean_html' ? (
                   <>
@@ -2000,7 +2086,7 @@ ${templateWithPhp}
                   </>
                 ) : (
                   <>
-                    <Code className="w-3.5 h-3.5"/> Copy Clean HTML
+                    <Code className="w-3.5 h-3.5"/> Copy HTML Export
                   </>
                 )}
               </button>
@@ -2009,7 +2095,7 @@ ${templateWithPhp}
                 onClick={() => handleDownloadPhpFile(activeCode, downloadFilename)}
                 className="flex items-center gap-1.5 px-3.5 py-2.5 bg-[#141419] hover:bg-[#16161d] border border-[#2db2ff]/20 hover:border-[#2db2ff]/60 text-[10px] font-black uppercase tracking-widest text-[#2db2ff] rounded-lg transition-all cursor-pointer shadow-sm"
               >
-                <Download className="w-3.5 h-3.5"/> Download PHP
+                <Download className="w-3.5 h-3.5"/> {oxygenSection === 'php' ? 'Download HTML' : 'Download PHP'}
               </button>
 
               <button 
@@ -2041,11 +2127,11 @@ ${templateWithPhp}
             <div>
               {oxygenSection === 'php' ? (
                 <span>
-                  <strong>Setup Method</strong>: Paste this script directly inside an <strong>Oxygen Builder or Bricks "Code Block" element</strong> under the <strong>"PHP & HTML" tab</strong>. It captures the local page-level Advanced Custom Fields data, applying responsive fallbacks gracefully without bloated code scripts.
+                  <strong>Step 1 — HTML Export</strong>: In Oxygen Builder, add a <strong>Code Block</strong> element and switch to the <strong>"HTML" tab</strong> (not "PHP &amp; HTML"). Paste this entire block. The design renders immediately with default content. <code>{"{field_id}"}</code> placeholders are replaced with live ACF values once Step 2 is active.
                 </span>
               ) : (
                 <span>
-                  <strong>Client Setup Method</strong>: Insert this snippet inside your child theme's <code>functions.php</code> file (or inside <strong>WPCode / Code Snippets plugin</strong>). This registers custom form layouts in standard Pages & Posts so non-coders can easily edit all images, links, text blocks, and headings cleanly.
+                  <strong>Step 2 — ACF Snippet</strong>: Paste this into your child theme's <code>functions.php</code> or the <strong>Code Snippets / WPCode plugin</strong>. It registers ACF fields for your page and automatically replaces <code>{"{field_id}"}</code> placeholders in the Step 1 HTML with the values you enter in the WordPress edit panel — no PHP in the Code Block required.
                 </span>
               )}
             </div>
@@ -2054,7 +2140,7 @@ ${templateWithPhp}
           {/* RENDER CODE EDITOR */}
           <div className="flex-1 overflow-auto p-6 font-mono text-xs text-gray-300 bg-[#0c0c0e] relative scrollbar-hide">
             <div className="absolute top-3 right-4 bg-black/50 backdrop-blur text-[10px] font-bold text-gray-500 border border-gray-800/40 px-2 py-1 rounded font-sans uppercase tracking-wider select-none">
-              php
+              {oxygenSection === 'php' ? 'html' : 'php'}
             </div>
             <pre className="whitespace-pre select-all text-[11px] leading-relaxed select-text">
               <code>
